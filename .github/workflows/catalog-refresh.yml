@@ -1,0 +1,58 @@
+name: OyunPusulasi 15 minute catalog refresh
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+      timezone: 'Europe/Istanbul'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: oyun-pusulasi-catalog
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - name: Read current collector and refresh verified store data
+        env:
+          OP_SITE_URL: ${{ vars.OP_SITE_URL }}
+          OP_SITE_SERVICE_TOKEN: ${{ secrets.OP_SITE_SERVICE_TOKEN }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import ast, json, os, pathlib, subprocess, sys, tempfile, urllib.parse, urllib.request
+
+          origin = os.environ.pop('OP_SITE_URL', '').rstrip('/')
+          token = os.environ.pop('OP_SITE_SERVICE_TOKEN', '')
+          site = urllib.parse.urlsplit(origin)
+          if not token or site.scheme != 'https' or not site.hostname or not site.hostname.endswith('.chatgpt.site') or site.username or site.password or site.path or site.query or site.fragment:
+              sys.exit('Configure the native OP_SITE_URL variable and OP_SITE_SERVICE_TOKEN secret first.')
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args):
+                  return None
+
+          for attempt in range(2):
+              try:
+                  request = urllib.request.Request(origin + '/tools/catalog-sync.py', headers={'OAI-Sites-Authorization': 'Bearer ' + token, 'Cache-Control': 'no-cache'})
+                  with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
+                      code = response.read(100001)
+                  if len(code) > 100000 or b'check-targets-v1' not in code or b'refresh-catalog-v1' not in code:
+                      raise ValueError('Published collector is missing or invalid.')
+                  ast.parse(code.decode('utf-8'))
+                  with tempfile.TemporaryDirectory() as folder:
+                      script = pathlib.Path(folder) / 'collector.py'
+                      script.write_bytes(code)
+                      result = subprocess.run([sys.executable, '-u', str(script)], input=json.dumps({'url': origin, 'token': token}) + '\n', text=True, timeout=360)
+                  if result.returncode:
+                      raise RuntimeError('Collector did not verify a completed run.')
+                  break
+              except Exception as error:
+                  print('Attempt ' + str(attempt + 1) + ' failed (' + type(error).__name__ + ').', flush=True)
+                  if attempt == 1:
+                      sys.exit('Catalog refresh failed. Check the updater logs and source availability.')
+          PY
