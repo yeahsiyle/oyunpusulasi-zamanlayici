@@ -48,7 +48,7 @@ jobs:
                   with tempfile.TemporaryDirectory() as folder:
                       script = pathlib.Path(folder) / 'collector.py'
                       script.write_bytes(code)
-                      result = subprocess.run([sys.executable, '-u', str(script)], input=json.dumps({'url': origin, 'token': token}) + '\n', text=True, timeout=360)
+                      result = subprocess.run([sys.executable, '-u', str(script)], input=json.dumps({'url': origin, 'token': token}) + '\n', text=True, timeout=780)
                   if result.returncode:
                       raise RuntimeError('Collector did not verify a completed run.')
                   break
